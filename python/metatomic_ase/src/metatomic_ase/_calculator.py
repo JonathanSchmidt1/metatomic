@@ -2,7 +2,7 @@ import logging
 import os
 import pathlib
 import warnings
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import metatensor.torch as mts
 import numpy as np
@@ -49,6 +49,32 @@ def _get_charges(atoms: ase.Atoms) -> np.ndarray:
         return atoms.get_charges()
     except Exception:
         return atoms.get_initial_charges()
+
+
+SYSTEM_QUANTITIES = {
+    "charge": {
+        "quantity": "charge",
+        "getter": lambda atoms: np.array([[atoms.info.get("charge", 0)]]),
+        "unit": "e",
+        "info_key": "charge",
+        "default": 0,
+    },
+    "spin": {
+        "quantity": "spin",
+        "getter": lambda atoms: np.array([[atoms.info.get("spin", 1)]]),
+        "unit": "",
+        "info_key": "spin",
+        "default": 1,
+    },
+}
+"""
+Per-system scalar inputs provided by ASE via ``atoms.info``.
+
+- ``"charge"``: total system charge in elementary charges, read from
+  ``atoms.info["charge"]``, defaults to ``0``.
+- ``"spin"``: spin multiplicity (2S+1), read from
+  ``atoms.info["spin"]``, defaults to ``1``.
+"""
 
 
 ARRAY_QUANTITIES = {
@@ -302,6 +328,15 @@ class MetatomicCalculator(ase.calculators.calculator.Calculator):
 
         self._model = model.to(device=self._device)
 
+        # Cache which atoms.info keys need change-detection so that check_state
+        # does only plain Python list iteration on every MD step, avoiding a
+        # TorchScript JIT dispatch per step to requested_inputs().
+        self._system_info_watch: List[Tuple[str, int]] = [
+            (infos["info_key"], infos["default"])
+            for name, infos in SYSTEM_QUANTITIES.items()
+            if name in self._model.requested_inputs()
+        ]
+
         self._calculate_uncertainty = (
             self._energy_uq_key in outputs
             # we require per-atom uncertainties to capture local effects
@@ -419,6 +454,34 @@ class MetatomicCalculator(ase.calculators.calculator.Calculator):
             options=options,
             check_consistency=self.parameters["check_consistency"],
         )
+
+    def check_state(self, atoms: ase.Atoms, tol: float = 1e-15) -> List[str]:
+        """Detect system changes, including ``atoms.info`` keys used as model inputs.
+
+        ASE's default :py:meth:`~ase.calculators.calculator.Calculator.check_state`
+        only tracks per-atom arrays (positions, numbers, …) and cell/pbc.  Changes
+        to ``atoms.info["charge"]`` or ``atoms.info["spin"]`` are invisible to it,
+        causing stale cached results when the charge or spin is updated between calls.
+
+        This override appends the name of any ``atoms.info`` key that has changed
+        since the last calculation to the standard change list, which forces a
+        fresh calculation.
+        """
+        changes = super().check_state(atoms, tol=tol)
+        if self.atoms is not None:
+            for key, default in self._system_info_watch:
+                old = self.atoms.info.get(key, default)
+                new = atoms.info.get(key, default)
+                try:
+                    equal = old == new
+                    # numpy arrays and similar objects return array-like booleans;
+                    # treat anything that is not a plain bool as "changed" to be safe
+                    if not isinstance(equal, bool) or not equal:
+                        changes.append(key)
+                except Exception:
+                    # comparison raised (e.g. mixed types); assume changed
+                    changes.append(key)
+        return changes
 
     def calculate(
         self,
@@ -895,9 +958,27 @@ def _get_ase_input(
     dtype: torch.dtype,
     device: torch.device,
 ) -> "TensorMap":
+    if name in SYSTEM_QUANTITIES:
+        infos = SYSTEM_QUANTITIES[name]
+        # shape: (1, 1) — one system, one scalar property
+        values = torch.tensor(infos["getter"](atoms), dtype=dtype, device=device)
+        block = TensorBlock(
+            values,
+            samples=Labels(["system"], torch.tensor([[0]], device=device)),
+            components=[],
+            properties=Labels([infos["quantity"]], torch.tensor([[0]], device=device)),
+        )
+        tensor = TensorMap(Labels(["_"], torch.tensor([[0]], device=device)), [block])
+        tensor.set_info("quantity", infos["quantity"])
+        tensor.set_info("unit", infos["unit"])
+        return tensor
+
     if name not in ARRAY_QUANTITIES:
         raise ValueError(
-            f"The model requested '{name}', which is not available in `ase`."
+            f"The model requested '{name}', which is not available in `ase`. "
+            "System-level quantities like 'charge' or 'spin' can be "
+            "set via atoms.info['charge'] and atoms.info['spin'] "
+            "respectively."
         )
 
     infos = ARRAY_QUANTITIES[name]
