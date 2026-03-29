@@ -926,9 +926,10 @@ class ChargeSpinEnergyModel(torch.nn.Module):
 def test_system_level_input_changes_energy(atoms):
     """Energy changes when charge or spin changes."""
     capabilities = ModelCapabilities(
-        outputs={"energy": ModelOutput(per_atom=False)},
+        outputs={"energy": ModelOutput(per_atom=False, unit="eV")},
         atomic_types=[28],
         interaction_range=0.0,
+        length_unit="Angstrom",
         supported_devices=["cpu"],
         dtype="float64",
     )
@@ -973,9 +974,10 @@ def test_system_level_input_changes_energy(atoms):
 def test_system_level_input_export_roundtrip(atoms, tmp_path):
     """Export a charge/spin model to disk and reload via MetatomicCalculator."""
     capabilities = ModelCapabilities(
-        outputs={"energy": ModelOutput(per_atom=False)},
+        outputs={"energy": ModelOutput(per_atom=False, unit="eV")},
         atomic_types=[28],
         interaction_range=0.0,
+        length_unit="Angstrom",
         supported_devices=["cpu"],
         dtype="float64",
     )
