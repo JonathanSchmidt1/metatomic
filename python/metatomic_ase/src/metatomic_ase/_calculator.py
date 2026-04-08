@@ -52,15 +52,8 @@ def _get_charges(atoms: ase.Atoms) -> np.ndarray:
 
 
 SYSTEM_QUANTITIES = {
-    "charge": {
-        "quantity": "charge",
-        "getter": lambda atoms: np.array([[atoms.info.get("charge", 0)]]),
-        "unit": "e",
-        "info_key": "charge",
-        "default": 0,
-    },
-    "spin": {
-        "quantity": "spin",
+    "spin_multiplicity": {
+        "quantity": "spin_multiplicity",
         "getter": lambda atoms: np.array([[atoms.info.get("spin", 1)]]),
         "unit": "",
         "info_key": "spin",
@@ -68,11 +61,9 @@ SYSTEM_QUANTITIES = {
     },
 }
 """
-Per-system scalar inputs provided by ASE via ``atoms.info``.
+Per-system scalar outputs provided by ASE via ``atoms.info``.
 
-- ``"charge"``: total system charge in elementary charges, read from
-  ``atoms.info["charge"]``, defaults to ``0``.
-- ``"spin"``: spin multiplicity (2S+1), read from
+- ``"spin_multiplicity"``: spin multiplicity (2S+1), read from
   ``atoms.info["spin"]``, defaults to ``1``.
 """
 
@@ -456,12 +447,12 @@ class MetatomicCalculator(ase.calculators.calculator.Calculator):
         )
 
     def check_state(self, atoms: ase.Atoms, tol: float = 1e-15) -> List[str]:
-        """Detect system changes, including ``atoms.info`` keys used as model inputs.
+        """Detect system changes, including ``atoms.info`` keys used as model outputs.
 
         ASE's default :py:meth:`~ase.calculators.calculator.Calculator.check_state`
         only tracks per-atom arrays (positions, numbers, …) and cell/pbc.  Changes
-        to ``atoms.info["charge"]`` or ``atoms.info["spin"]`` are invisible to it,
-        causing stale cached results when the charge or spin is updated between calls.
+        to ``atoms.info["spin"]`` are invisible to it,
+        causing stale cached results when the spin multiplicity is updated between calls.
 
         This override appends the name of any ``atoms.info`` key that has changed
         since the last calculation to the standard change list, which forces a
@@ -976,9 +967,8 @@ def _get_ase_input(
     if name not in ARRAY_QUANTITIES:
         raise ValueError(
             f"The model requested '{name}', which is not available in `ase`. "
-            "System-level quantities like 'charge' or 'spin' can be "
-            "set via atoms.info['charge'] and atoms.info['spin'] "
-            "respectively."
+            "System-level quantities like 'spin_multiplicity' can be "
+            "set via atoms.info['spin']."
         )
 
     infos = ARRAY_QUANTITIES[name]
@@ -986,7 +976,7 @@ def _get_ase_input(
     values = infos["getter"](atoms)
     if values.shape[0] != len(atoms):
         raise NotImplementedError(
-            f"The model requested the '{name}' input, "
+            f"The model requested the '{name}' output, "
             f"but the data is not per-atom (shape {values.shape}). "
         )
     # Shape: (n_atoms, n_components) -> (n_atoms, n_components, /* n_properties */ 1)

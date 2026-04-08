@@ -829,11 +829,10 @@ def test_additional_input(atoms):
         assert np.allclose(values, expected)
 
 
-def test_system_level_input(atoms):
-    """charge and spin are per-system integer inputs read from atoms.info."""
+def test_system_level_output(atoms):
+    """spin_multiplicity is a per-system integer output read from atoms.info['spin']."""
     inputs = {
-        "charge": ModelOutput(quantity="charge", unit="e", per_atom=False),
-        "spin": ModelOutput(quantity="spin", unit="", per_atom=False),
+        "spin_multiplicity": ModelOutput(quantity="spin_multiplicity", unit="", per_atom=False),
     }
     outputs = {("extra::" + n): inputs[n] for n in inputs}
     capabilities = ModelCapabilities(
@@ -847,27 +846,20 @@ def test_system_level_input(atoms):
     model = AtomisticModel(
         AdditionalInputModel(inputs).eval(), ModelMetadata(), capabilities
     )
-    atoms.info["charge"] = -2
     atoms.info["spin"] = 3
     calculator = MetatomicCalculator(model, check_consistency=False)
     results = calculator.run_model(atoms, outputs)
 
-    charge_tensor = results["extra::charge"]
-    assert charge_tensor[0].samples.names == ["system"]
-    assert charge_tensor[0].values.dtype == torch.float64  # matches model dtype
-    assert int(charge_tensor[0].values[0, 0]) == -2
-
-    spin_tensor = results["extra::spin"]
+    spin_tensor = results["extra::spin_multiplicity"]
     assert spin_tensor[0].samples.names == ["system"]
     assert spin_tensor[0].values.dtype == torch.float64  # matches model dtype
     assert int(spin_tensor[0].values[0, 0]) == 3
 
 
-def test_system_level_input_defaults(atoms):
-    """charge defaults to 0 and spin to 1 when not set in atoms.info."""
+def test_system_level_output_defaults(atoms):
+    """spin_multiplicity defaults to 1 when not set in atoms.info."""
     inputs = {
-        "charge": ModelOutput(quantity="charge", unit="e", per_atom=False),
-        "spin": ModelOutput(quantity="spin", unit="", per_atom=False),
+        "spin_multiplicity": ModelOutput(quantity="spin_multiplicity", unit="", per_atom=False),
     }
     outputs = {("extra::" + n): inputs[n] for n in inputs}
     capabilities = ModelCapabilities(
@@ -881,26 +873,23 @@ def test_system_level_input_defaults(atoms):
     model = AtomisticModel(
         AdditionalInputModel(inputs).eval(), ModelMetadata(), capabilities
     )
-    atoms.info.pop("charge", None)
     atoms.info.pop("spin", None)
     calculator = MetatomicCalculator(model, check_consistency=False)
     results = calculator.run_model(atoms, outputs)
 
-    assert int(results["extra::charge"][0].values[0, 0]) == 0
-    assert int(results["extra::spin"][0].values[0, 0]) == 1
+    assert int(results["extra::spin_multiplicity"][0].values[0, 0]) == 1
 
 
-class ChargeSpinEnergyModel(torch.nn.Module):
-    """Minimal energy model whose output depends on charge and spin.
+class SpinMultiplicityEnergyModel(torch.nn.Module):
+    """Minimal energy model whose output depends on spin multiplicity.
 
-    Returns energy = charge_value + 10 * spin_value so that different
-    charge/spin inputs always produce different energies.
+    Returns energy = 10 * spin_value so that different spin multiplicities
+    always produce different energies.
     """
 
     def requested_inputs(self) -> Dict[str, ModelOutput]:
         return {
-            "charge": ModelOutput(quantity="charge", unit="e", per_atom=False),
-            "spin": ModelOutput(quantity="spin", unit="", per_atom=False),
+            "spin_multiplicity": ModelOutput(quantity="spin_multiplicity", unit="", per_atom=False),
         }
 
     def forward(
@@ -910,9 +899,8 @@ class ChargeSpinEnergyModel(torch.nn.Module):
         selected_atoms: Optional[Labels] = None,
     ) -> Dict[str, TensorMap]:
         system = systems[0]
-        charge = float(system.get_data("charge").block(0).values[0, 0])
-        spin = float(system.get_data("spin").block(0).values[0, 0])
-        energy_value = charge + 10.0 * spin
+        spin = float(system.get_data("spin_multiplicity").block(0).values[0, 0])
+        energy_value = 10.0 * spin
         block = TensorBlock(
             values=torch.tensor([[energy_value]], dtype=torch.float64),
             samples=Labels("system", torch.tensor([[0]])),
@@ -922,8 +910,8 @@ class ChargeSpinEnergyModel(torch.nn.Module):
         return {"energy": TensorMap(Labels("_", torch.tensor([[0]])), [block])}
 
 
-def test_system_level_input_changes_energy(atoms):
-    """Energy changes when charge or spin changes."""
+def test_system_level_output_changes_energy(atoms):
+    """Energy changes when spin multiplicity changes."""
     capabilities = ModelCapabilities(
         outputs={"energy": ModelOutput(per_atom=False, unit="eV")},
         atomic_types=[28],
@@ -933,45 +921,33 @@ def test_system_level_input_changes_energy(atoms):
         dtype="float64",
     )
     model = AtomisticModel(
-        ChargeSpinEnergyModel().eval(), ModelMetadata(), capabilities
+        SpinMultiplicityEnergyModel().eval(), ModelMetadata(), capabilities
     )
 
     atoms.info["spin"] = 1
-    atoms.info["charge"] = 0
     calc = MetatomicCalculator(model, check_consistency=False)
     atoms.calc = calc
-    e_neutral = atoms.get_potential_energy()
-
-    atoms.info["charge"] = 2
-    atoms.calc.reset()
-    e_charged = atoms.get_potential_energy()
-    assert e_neutral != e_charged, "Different charges must give different energies"
-
-    atoms.info["charge"] = 0
-    atoms.info["spin"] = 1
-    atoms.calc.reset()
     e_singlet = atoms.get_potential_energy()
 
     atoms.info["spin"] = 3
     atoms.calc.reset()
     e_triplet = atoms.get_potential_energy()
-    assert e_singlet != e_triplet, "Different spins must give different energies"
+    assert e_singlet != e_triplet, "Different spin multiplicities must give different energies"
 
-    # check_state must invalidate cache when atoms.info['charge'] changes
-    atoms.info["charge"] = 0
+    # check_state must invalidate cache when atoms.info['spin'] changes
     atoms.info["spin"] = 1
     atoms.calc.reset()
     e_before = atoms.get_potential_energy()
 
-    atoms.info["charge"] = 1  # change without explicit reset
+    atoms.info["spin"] = 2  # change without explicit reset
     e_after = atoms.get_potential_energy()
     assert e_before != e_after, (
-        "check_state must invalidate cache when atoms.info['charge'] changes"
+        "check_state must invalidate cache when atoms.info['spin'] changes"
     )
 
 
-def test_system_level_input_export_roundtrip(atoms, tmp_path):
-    """Export a charge/spin model to disk and reload via MetatomicCalculator."""
+def test_system_level_output_export_roundtrip(atoms, tmp_path):
+    """Export a spin_multiplicity model to disk and reload via MetatomicCalculator."""
     capabilities = ModelCapabilities(
         outputs={"energy": ModelOutput(per_atom=False, unit="eV")},
         atomic_types=[28],
@@ -981,21 +957,20 @@ def test_system_level_input_export_roundtrip(atoms, tmp_path):
         dtype="float64",
     )
     model = AtomisticModel(
-        ChargeSpinEnergyModel().eval(), ModelMetadata(), capabilities
+        SpinMultiplicityEnergyModel().eval(), ModelMetadata(), capabilities
     )
-    model_path = str(tmp_path / "charge_spin_model.pt")
+    model_path = str(tmp_path / "spin_multiplicity_model.pt")
     model.save(model_path)
 
-    atoms.info["charge"] = 0
     atoms.info["spin"] = 1
     calc = MetatomicCalculator(model_path, check_consistency=True)
     atoms.calc = calc
-    e_neutral = atoms.get_potential_energy()
+    e_singlet = atoms.get_potential_energy()
 
-    atoms.info["charge"] = 2
+    atoms.info["spin"] = 3
     atoms.calc.reset()
-    e_charged = atoms.get_potential_energy()
-    assert e_neutral != e_charged, "Loaded model must produce charge-dependent energies"
+    e_triplet = atoms.get_potential_energy()
+    assert e_singlet != e_triplet, "Loaded model must produce spin-dependent energies"
 
 
 @pytest.mark.parametrize("device,dtype", ALL_DEVICE_DTYPE)
