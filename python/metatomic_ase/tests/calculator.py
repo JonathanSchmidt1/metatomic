@@ -832,7 +832,9 @@ def test_additional_input(atoms):
 def test_system_level_output(atoms):
     """spin_multiplicity is a per-system integer output read from atoms.info['spin']."""
     inputs = {
-        "spin_multiplicity": ModelOutput(quantity="spin_multiplicity", unit="", per_atom=False),
+        "spin_multiplicity": ModelOutput(
+            quantity="spin_multiplicity", unit="", per_atom=False
+        ),
     }
     outputs = {("extra::" + n): inputs[n] for n in inputs}
     capabilities = ModelCapabilities(
@@ -859,7 +861,9 @@ def test_system_level_output(atoms):
 def test_system_level_output_defaults(atoms):
     """spin_multiplicity defaults to 1 when not set in atoms.info."""
     inputs = {
-        "spin_multiplicity": ModelOutput(quantity="spin_multiplicity", unit="", per_atom=False),
+        "spin_multiplicity": ModelOutput(
+            quantity="spin_multiplicity", unit="", per_atom=False
+        ),
     }
     outputs = {("extra::" + n): inputs[n] for n in inputs}
     capabilities = ModelCapabilities(
@@ -889,7 +893,9 @@ class SpinMultiplicityEnergyModel(torch.nn.Module):
 
     def requested_inputs(self) -> Dict[str, ModelOutput]:
         return {
-            "spin_multiplicity": ModelOutput(quantity="spin_multiplicity", unit="", per_atom=False),
+            "spin_multiplicity": ModelOutput(
+            quantity="spin_multiplicity", unit="", per_atom=False
+        ),
         }
 
     def forward(
